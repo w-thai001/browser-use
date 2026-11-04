@@ -19,6 +19,7 @@ from langchain_core.messages import (
 from pydantic import BaseModel, ValidationError
 
 from browser_use.agent.gif import create_history_gif
+from browser_use.agent.hidden_credentials import HiddenCredentialsIngestor
 from browser_use.agent.message_manager.service import MessageManager, MessageManagerSettings
 from browser_use.agent.message_manager.utils import convert_input_messages, extract_json_from_model_output, save_conversation
 from browser_use.agent.prompts import AgentMessagePrompt, PlannerPrompt, SystemPrompt
@@ -75,6 +76,27 @@ Context = TypeVar('Context')
 
 
 class Agent(Generic[Context]):
+	def _build_sensitive_data(
+		self,
+		sensitive_data: Optional[Dict[str, str]],
+		hidden_credentials: Optional[HiddenCredentialsIngestor],
+	) -> Optional[Dict[str, str]]:
+		"""Combine explicit sensitive data with ingested hidden credentials."""
+		combined: Dict[str, str] = {}
+		if sensitive_data:
+			combined.update(sensitive_data)
+
+		if hidden_credentials:
+			ingested = hidden_credentials.ingest()
+			overlap = set(ingested.keys()) & set(combined.keys())
+			if overlap:
+				raise ValueError(
+					f'Duplicate sensitive data placeholders supplied via hidden_credentials and sensitive_data: {", ".join(sorted(overlap))}'
+				)
+			combined.update(ingested)
+
+		return combined or None
+
 	def __init__(
 		self,
 		task: str,
@@ -90,6 +112,7 @@ class Agent(Generic[Context]):
 		register_new_step_callback: Callable[['BrowserState', 'AgentOutput', int], Awaitable[None]] | None = None,
 		register_done_callback: Callable[['AgentHistoryList'], Awaitable[None]] | None = None,
 		register_external_agent_status_callback: Callable[[str], Awaitable[None]] | None = None,
+		hidden_credentials: Optional[HiddenCredentialsIngestor] = None,
 		# Agent settings
 		use_vision: bool = True,
 		use_vision_for_planner: bool = False,
@@ -148,6 +171,8 @@ class Agent(Generic[Context]):
 
 		# Initialize state
 		self.state = injected_agent_state or AgentState()
+		self.hidden_credentials = hidden_credentials
+		self.sensitive_data = self._build_sensitive_data(sensitive_data, hidden_credentials)
 
 		# Initialize message manager with state
 		self._message_manager = MessageManager(
@@ -160,7 +185,7 @@ class Agent(Generic[Context]):
 				max_input_tokens=self.settings.max_input_tokens,
 				include_attributes=self.settings.include_attributes,
 				message_context=self.settings.message_context,
-				sensitive_data=sensitive_data,
+				sensitive_data=self.sensitive_data,
 				available_file_paths=self.settings.available_file_paths,
 			),
 			state=self.state.message_manager_state,
@@ -170,7 +195,6 @@ class Agent(Generic[Context]):
 		self.task = task
 		self.llm = llm
 		self.controller = controller
-		self.sensitive_data = sensitive_data
 
 		# Browser setup
 		self.injected_browser = browser is not None
@@ -381,10 +405,8 @@ class Agent(Generic[Context]):
 
 			self.state.consecutive_failures += 1
 		else:
-			from google.api_core.exceptions import ResourceExhausted
-			from openai import RateLimitError
-
-			if isinstance(error, RateLimitError) or isinstance(error, ResourceExhausted):
+			error_name = error.__class__.__name__
+			if error_name in ['RateLimitError', 'ResourceExhausted']:
 				logger.warning(f'{prefix}{error_msg}')
 				await asyncio.sleep(self.settings.retry_delay)
 				self.state.consecutive_failures += 1
