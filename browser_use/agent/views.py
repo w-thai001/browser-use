@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Type
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from openai import RateLimitError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
 
 from browser_use.agent.message_manager.views import MessageManagerState
@@ -317,7 +316,7 @@ class AgentError:
 		message = ''
 		if isinstance(error, ValidationError):
 			return f'{AgentError.VALIDATION_ERROR}\nDetails: {str(error)}'
-		if isinstance(error, RateLimitError):
+		if error.__class__.__name__ == 'RateLimitError':
 			return AgentError.RATE_LIMIT_ERROR
 		if include_trace:
 			return f'{str(error)}\nStacktrace:\n{traceback.format_exc()}'

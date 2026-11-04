@@ -65,6 +65,29 @@ OPENAI_API_KEY=
 
 For other settings, models, and more, check out the [documentation 📕](https://docs.browser-use.com).
 
+## Securely share credentials with the LLM
+
+Use the built-in hidden credential ingestor to load secrets from a single place (environment variables, files, or direct values) and expose only placeholders to the LLM. The agent will automatically swap `<secret>placeholder</secret>` tags with the real values while filtering them out of prompts, logs, and telemetry.
+
+```python
+from pathlib import Path
+from langchain_openai import ChatOpenAI
+from browser_use import Agent, HiddenCredential, HiddenCredentialsIngestor
+
+ingestor = HiddenCredentialsIngestor(
+    credentials=[
+        HiddenCredential(placeholder='openai_key', env_var='OPENAI_API_KEY'),
+        HiddenCredential(placeholder='github_token', file_path=Path('~/.secrets/github').expanduser()),
+    ]
+)
+
+agent = Agent(
+    task="Post today's build notes to GitHub as a new gist.",
+    llm=ChatOpenAI(model='gpt-4o'),
+    hidden_credentials=ingestor,
+)
+# In your instructions to the model you can write: <secret>github_token</secret>
+```
 
 ### Test with UI
 
@@ -200,7 +223,6 @@ If you use Browser Use in your research or project, please cite:
 <div align="center">
 Made with ❤️ in Zurich and San Francisco
  </div> 
-
 
 
 
